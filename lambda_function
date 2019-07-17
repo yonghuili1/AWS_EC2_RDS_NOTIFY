@@ -1,0 +1,77 @@
+from __future__ import print_function
+import json
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
+from dateutil.parser import parse
+from datetime import datetime,timezone,timedelta
+
+sender = 'xxx'
+receivers = 'xxx'
+#receivers = 'xxxx'
+mail_host = 'xxxx'
+mail_user = 'xxxx'
+mail_pass = 'xxxx'
+
+def lambda_handler(event, context):
+    for record in event['Records']:
+        payload = record["body"]
+        
+        try:
+            data = json.loads(json.dumps(eval(payload)))
+        except:
+            data = json.loads(payload)
+
+        print (data)
+        
+        if 'version' in data:
+            v = data.get('detail')['configurationItem']['resourceType']
+            action = "无"
+            if data.get('detail')['configurationItem']['configurationItemStatus'] == "ResourceDeleted":
+                action = "删除"
+            if data.get('detail')['configurationItem']['configurationItemStatus'] == "ResourceDiscovered":
+                action = "创建"
+            reid = data.get('detail')['configurationItem']['resourceId']
+            actiontime = parse(data.get('detail')['configurationItem']['configurationItemCaptureTime']).astimezone(timezone(timedelta(hours=8)))
+            region = data.get('detail')['configurationItem']['awsRegion']
+            tag = data.get('detail')['configurationItem']['tags']
+            account = data.get('account')    
+            if v == "AWS::RDS::DBInstance":
+                try:
+                    instype = data.get('detail')['configurationItem']['configuration']['dBInstanceClass']
+                except:
+                    instype = data.get('detail')['configurationItemDiff']['changedProperties']['Configuration']['previousValue']['dBInstanceClass']
+                tag_DB = data.get('detail')['configurationItem']['resourceName']
+                tag = {'DBname':tag_DB}
+            if v =="AWS::EC2::Instance":
+                try:
+                    instype = data.get('detail')['configurationItem']['configuration']['instance']   #型号
+                except:
+                        try:
+                            instype =data.get('detail')['configurationItemDiff']['changedProperties']['Configuration']['previousValue']['instanceType']
+                        except:
+                            instype =data.get('detail')['configurationItem']['configuration']['instanceType']
+            if v =="AWS::EC2::Instance" and action == "删除":
+                t = data.get('detail')['configurationItemDiff']['changedProperties']['Configuration']['previousValue']['tags'];tag_k=[];tag_v=[]
+                for i in t:tag_k.append(i['key']);tag_v.append(i['value'])
+                tag = dict(zip(tag_k,tag_v))
+            if  action == "创建" or action == "删除":    
+                mess = open('./notify.html','r')
+                notify = (str(mess.read())) % (region,v,region,region,reid,reid,instype,action,account,actiontime,tag)
+                print (notify)
+                message = MIMEText(notify, 'html', 'utf-8')
+                message['From'] = Header("Notify_Robot", 'utf-8')
+                message['To'] =  Header("运维组", 'utf-8')
+ 
+                subject = 'AWS资源变更通知'
+                message['Subject'] = Header(subject, 'utf-8')
+ 
+ 
+                try:
+                    smtpObj = smtplib.SMTP_SSL(mail_host,465)   
+                    smtpObj.login(mail_user,mail_pass)  
+                    smtpObj.sendmail(sender, receivers, message.as_string())
+                    print ("邮件发送成功")
+                except smtplib.SMTPException:
+                    print ("Error: 无法发送邮件")
+                    ####
